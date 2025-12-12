@@ -1,0 +1,7 @@
+pyarrow>=14.0.0
+requests>=2.31.0
+pyyaml>=6.0
+rich>=13.0.0
+sseclient-py>=1.8.0
+grpcio-tools>=1.76.0
+

@@ -1,0 +1,35 @@
+# Unified Evaluator Configuration
+# Backends disponibles para evaluación
+
+backends:
+  system1:
+    name: "luzzi-core-im-enrutador"
+    description: "FastAPI + SSE + WebSocket"
+    type: "rest_sse"
+    base_url: "http://localhost:8000"
+    timeout: 60
+    poll_interval_ms: 500
+    max_poll_attempts: 120
+
+  system2:
+    name: "enrutador-gateway"
+    description: "FastAPI + Arrow Flight + gRPC"
+    type: "arrow_flight"
+    flight_uri: "grpc://localhost:8815"
+    health_url: "http://localhost:8080/health"
+
+  system3:
+    name: "enrutador-gateway-node"
+    description: "Node.js + Arrow Flight + gRPC"
+    type: "arrow_flight"
+    flight_uri: "grpc://localhost:8815"
+    health_url: "http://localhost:8081/health"
+
+# Métricas
+metrics:
+  output_file: "metrics.csv"
+
+# Logging
+logging:
+  level: "INFO"
+  format: "text" # "text" or "json"
