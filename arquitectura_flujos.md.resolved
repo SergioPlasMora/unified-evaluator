@@ -1,0 +1,194 @@
+# Comparativa de Arquitecturas: Flujo de Datos
+
+## Resumen Ejecutivo
+
+| Aspecto | System 1 (REST/SSE) | System 2/3 (Arrow Flight) |
+|---------|---------------------|---------------------------|
+| **Rol de la API** | Intermediario activo | Puente transparente |
+| **Procesa datos** | ✅ Sí (buffer, decode) | ❌ No (pipe directo) |
+| **Formato interno** | Base64 JSON | Binario Arrow IPC |
+
+---
+
+## System 1: luzzi-core-im-enrutador (REST/SSE)
+
+### Diagrama de Flujo
+
+```mermaid
+sequenceDiagram
+    participant App as Aplicación (Cliente)
+    participant API as Enrutador API
+    participant SSE as Cola SSE
+    participant CON as Data Connector
+
+    Note over API: LA API "MASTICA" LOS DATOS
+
+    App->>API: POST /datasets/request-stream
+    API->>SSE: Encola comando
+    API-->>App: {request_id, stream_url}
+
+    CON->>API: GET /sse/conector/{mac}
+    SSE-->>CON: {action: "stream_dataset"}
+
+    loop Cada chunk
+        CON->>API: POST /datasets/chunk (Base64)
+        Note over API: DECODE Base64 → Buffer
+        API->>API: buffer.put(chunk)
+    end
+
+    CON->>API: POST /datasets/complete
+
+    App->>API: GET /datasets/stream/{request_id}
+    loop Consumir buffer
+        API->>API: buffer.get()
+        API-->>App: yield chunk (bytes)
+    end
+```
+
+### Características Clave
+
+1. **Buffer en memoria**: La API mantiene `asyncio.Queue` por request
+2. **Decodificación**: Base64 → bytes en cada chunk
+3. **Almacenamiento temporal**: Los datos pasan por la memoria de la API
+4. **Overhead**: 33% extra por codificación Base64
+
+### Código Relevante
+
+```python
+# datasets_stream.py - Recibe chunk del Connector
+async def receive_chunk(chunk: StreamChunk):
+    buffer = _stream_buffers[request_id]
+    chunk_data = base64.b64decode(chunk.data)  # ← DECODE
+    await buffer.put(chunk_data)  # ← ALMACENA
+
+# Consume stream - App consume
+async def generate():
+    while True:
+        item = await buffer.get()  # ← LEE DEL BUFFER
+        yield chunk_data
+```
+
+---
+
+## Systems 2 y 3: Arrow Flight Gateway (Python / Node.js)
+
+### Diagrama de Flujo
+
+```mermaid
+sequenceDiagram
+    participant CLI as Cliente gRPC
+    participant GW as Gateway
+    participant WS as WebSocket
+    participant CON as Data Connector
+
+    Note over GW: EL GATEWAY SOLO HACE PIPE
+
+    CLI->>GW: GetFlightInfo(tenant, dataset)
+    GW->>WS: {action: "get_flight_info"}
+    CON-->>GW: {schema, ticket}
+    GW-->>CLI: FlightInfo
+
+    CLI->>GW: DoGet(ticket)
+    GW->>WS: {action: "do_get", ticket}
+
+    loop Chunks binarios
+        CON->>WS: [Binary Frame: Arrow IPC]
+        WS->>GW: bytes (sin tocar)
+        GW-->>CLI: FlightData{data_body: bytes}
+    end
+
+    CON->>WS: {type: "stream_end"}
+```
+
+### Características Clave
+
+1. **Sin buffer**: Los chunks pasan directo al cliente
+2. **Sin decodificación**: Binario puro Arrow IPC
+3. **Zero-copy**: El Gateway reenvía bytes sin procesar
+4. **Eficiente**: Sin overhead de encoding/decoding
+
+### Código Relevante - System 3 (Node.js)
+
+```javascript
+// flight-server.js - DoGet
+async function doGet(call) {
+    for await (const chunk of manager.sendStreamRequest(...)) {
+        call.write({
+            data_body: chunk  // ← REENVÍO DIRECTO, sin tocar
+        });
+    }
+    call.end();
+}
+
+// connection-manager.js - Chunks del Connector
+onChunk: (chunk) => {
+    chunkQueue.push(chunk);  // ← NO PROCESA, solo encola
+}
+```
+
+### Código Relevante - System 2 (Python)
+
+```python
+# flight_server.py - DoGet
+async for item in manager.send_request_stream(...):
+    reader = pa.ipc.open_stream(item)  # ← Lee directo
+    for batch in reader:
+        batches.append(batch)  # ← Sin transformación
+```
+
+---
+
+## Comparativa Visual
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ SYSTEM 1: La API "mastica" los datos                            │
+│                                                                  │
+│  Connector → [Base64 JSON] → API Buffer → [decode] → Cliente    │
+│                              ↑                                   │
+│                         ALMACENA EN MEMORIA                      │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ SYSTEMS 2/3: El Gateway es un "puente transparente"            │
+│                                                                  │
+│  Connector → [Binary Arrow IPC] → Gateway PIPE → Cliente        │
+│                                   ↑                              │
+│                              NO PROCESA                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Impacto en Rendimiento
+
+| Métrica | System 1 | System 2 | System 3 |
+|---------|----------|----------|----------|
+| **Throughput** | 26.76 req/s | 20.91 req/s | 59.10 req/s |
+| **Latencia** | 2,593 ms | 4,120 ms | 1,059 ms |
+| **Motivo** | Buffer + decode | Síncrono en Python | Pipe directo |
+
+### ¿Por qué System 3 es más rápido?
+
+1. **No hay buffer intermedio** → Menos memoria usada
+2. **No hay codificación** → Sin overhead Base64 (33%)
+3. **Async nativo** → Node.js maneja I/O de forma no bloqueante
+4. **Formato binario** → Arrow IPC es más compacto que JSON
+
+### ¿Por qué System 1 tiene latencia alta?
+
+1. **Doble paso por la API**: Connector → API → Cliente
+2. **Base64 encoding**: 33% más datos transferidos
+3. **Buffer en memoria**: `asyncio.Queue` introduce latencia
+4. **Decodificación por chunk**: CPU extra en cada chunk
+
+---
+
+## Conclusión
+
+| Sistema | Patrón | Uso Recomendado |
+|---------|--------|-----------------|
+| **System 1** | Store & Forward | Cuando necesitas procesar/transformar datos en el backend |
+| **System 2/3** | Direct Pipe | Cuando quieres máxima velocidad punto-a-punto |
+
+**Tu observación es correcta**: System 1 "mastica" los datos, mientras que Systems 2 y 3 simplemente establecen un túnel transparente entre el Connector y el Cliente.
