@@ -45,6 +45,11 @@ class ArrowFlightAdapter(IBackendAdapter):
         self._timeout = timeout
         self._backend_name = backend_name
         self._client: Optional[flight.FlightClient] = None
+        
+        # Reset gRPC channel if backend uses raw gRPC (system3/system4)
+        # Each backend may connect to different hosts
+        if backend_name in ("system3", "system4"):
+            ArrowFlightAdapter._grpc_channel = None
     
     @property
     def name(self) -> str:
@@ -115,8 +120,8 @@ class ArrowFlightAdapter(IBackendAdapter):
         
         Para system3 (Node.js), usa método alternativo por incompatibilidad de protocolo.
         """
-        # System3 usa implementación alternativa
-        if self._backend_name == "system3":
+        # System3 and System4 use alternative implementation (raw gRPC)
+        if self._backend_name in ("system3", "system4"):
             return self._query_sync_raw(connector_id, dataset, timeout, rows)
         
         t0 = time.perf_counter()
@@ -341,6 +346,119 @@ class ArrowFlightAdapter(IBackendAdapter):
         ArrowFlightAdapter._stubs_compiled = True
         logger.info("Proto stubs compiled and cached for system3")
     
+    def _query_stream_raw(
+        self, 
+        connector_id: str, 
+        dataset: str,
+        output_file: Optional[str] = None,
+        rows: Optional[int] = None
+    ) -> Generator[bytes, None, QueryResult]:
+        """
+        Método alternativo de streaming para system3 (Node.js).
+        Usa gRPC directo y yield chunks IPC a medida que llegan.
+        """
+        import grpc
+        
+        t0 = time.perf_counter()
+        ttfb = 0
+        total_rows = 0
+        total_bytes = 0
+        chunk_count = 0
+        
+        result = QueryResult(
+            request_id=f"{connector_id}:{dataset}:{t0}",
+            backend=self._backend_name,
+            connector_id=connector_id,
+            dataset=dataset,
+            pattern=QueryPattern.STREAM.value,
+            status="pending",
+            t0_sent=t0
+        )
+        
+        output_handle = None
+        if output_file:
+            output_handle = open(output_file, 'wb')
+        
+        try:
+            # Inicializar stubs si es necesario
+            if not ArrowFlightAdapter._stubs_compiled:
+                self._compile_proto_stubs()
+            
+            flight_pb2 = ArrowFlightAdapter._proto_stubs['pb2']
+            flight_pb2_grpc = ArrowFlightAdapter._proto_stubs['pb2_grpc']
+            
+            # Reutilizar o crear canal gRPC
+            uri = self._flight_uri.replace("grpc://", "")
+            if ArrowFlightAdapter._grpc_channel is None:
+                ArrowFlightAdapter._grpc_channel = grpc.insecure_channel(uri, options=[
+                    ('grpc.max_receive_message_length', 200 * 1024 * 1024),
+                ])
+            
+            stub = flight_pb2_grpc.FlightServiceStub(ArrowFlightAdapter._grpc_channel)
+            
+            # 1. GetFlightInfo
+            path = [connector_id.encode(), dataset.encode()]
+            if rows:
+                path.append(str(rows).encode())
+            
+            descriptor = flight_pb2.FlightDescriptor(
+                type=flight_pb2.FlightDescriptor.PATH,
+                path=path
+            )
+            
+            info = stub.GetFlightInfo(descriptor, timeout=60)
+            
+            if not info.endpoint:
+                result.status = "error"
+                result.error = "No endpoints returned"
+                result.total_time = time.perf_counter() - t0
+                return result
+            
+            # 2. DoGet - streaming chunks
+            ticket = info.endpoint[0].ticket
+            
+            for flight_data in stub.DoGet(flight_pb2.Ticket(ticket=ticket.ticket), timeout=120):
+                if flight_data.data_body and len(flight_data.data_body) > 0:
+                    if chunk_count == 0:
+                        ttfb = time.perf_counter() - t0
+                    
+                    chunk_count += 1
+                    chunk_bytes = flight_data.data_body
+                    total_bytes += len(chunk_bytes)
+                    
+                    # Parsear para contar rows
+                    try:
+                        buffer = pa.py_buffer(chunk_bytes)
+                        reader = pa.ipc.open_stream(buffer)
+                        table = reader.read_all()
+                        total_rows += table.num_rows
+                    except:
+                        pass
+                    
+                    if output_handle:
+                        output_handle.write(chunk_bytes)
+                    
+                    yield chunk_bytes
+            
+            result.status = "success"
+            
+        except Exception as e:
+            result.status = "error"
+            result.error = str(e)
+            logger.error(f"System3 stream error: {e}")
+            
+        finally:
+            if output_handle:
+                output_handle.close()
+        
+        result.total_time = time.perf_counter() - t0
+        result.ttfb = ttfb
+        result.rows = total_rows
+        result.bytes = total_bytes
+        result.calculate_metrics()
+        
+        return result
+    
     def query_stream(
         self, 
         connector_id: str, 
@@ -353,6 +471,11 @@ class ArrowFlightAdapter(IBackendAdapter):
         Arrow Flight: DoGet con streaming.
         Yield batches Arrow IPC a medida que llegan.
         """
+        # System3 and System4 use alternative implementation
+        if self._backend_name in ("system3", "system4"):
+            yield from self._query_stream_raw(connector_id, dataset, output_file, rows)
+            return
+        
         t0 = time.perf_counter()
         ttfb = 0
         total_rows = 0

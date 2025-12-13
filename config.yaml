@@ -25,6 +25,13 @@ backends:
     flight_uri: "grpc://localhost:8815"
     health_url: "http://localhost:8081/health"
 
+  system4:
+    name: "enrutador-gateway-go"
+    description: "Go + Arrow Flight + gRPC"
+    type: "arrow_flight"
+    flight_uri: "grpc://localhost:8815"
+    health_url: "http://localhost:8080/health"
+
 # Métricas
 metrics:
   output_file: "metrics.csv"

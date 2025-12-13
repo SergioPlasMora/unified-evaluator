@@ -385,7 +385,7 @@ Examples:
     parser.add_argument(
         "--backend", "-b",
         required=True,
-        choices=["system1", "system2", "system3"],
+        choices=["system1", "system2", "system3", "system4"],
         help="Backend to test (system1=REST/SSE, system2/3=Arrow Flight)"
     )
     parser.add_argument(

@@ -42,32 +42,34 @@ python main.py --backend system3 list
 
 ```bash
 # Sistema 1 (REST/SSE) - usa MAC address
-python main.py --backend system1 query 10-51-07-96-d5-49 dataset_1mb.csv
-python main.py --backend system1 query 10-51-07-96-d5-49 dataset_1mb.csv --pattern stream
-python main.py --backend system1 query 10-51-07-96-d5-49 dataset_1mb.csv --pattern offload
+python main.py --backend system1 query cc-28-aa-cd-5c-74 dataset_1mb.csv
+python main.py --backend system1 query cc-28-aa-cd-5c-74 dataset_1mb.csv --pattern stream
+python main.py --backend system1 query cc-28-aa-cd-5c-74 dataset_1mb.csv --pattern offload
 
 # Sistema 2 (Arrow Flight Python) - usa tenant_id
-python main.py --backend system2 query tenant_sergio sales
-python main.py --backend system2 query tenant_sergio sales --rows 1000
+python main.py --backend system2 query tenant_desktop_cfiot58 sales
+python main.py --backend system2 query tenant_desktop_cfiot58 sales --rows 1000
 
 # Sistema 3 (Arrow Flight Node.js) - usa tenant_id
-python main.py --backend system3 query tenant_sergio sales
+python main.py --backend system3 query tenant_desktop_cfiot58 sales
 ```
 
 ### Load Test
 
 ```bash
 # Sistema 1 - 100 requests, 10 concurrentes
-python main.py --backend system1 load-test -n 100 -c 10 -d dataset_1kb.json --connectors 10-51-07-96-d5-49
+python main.py --backend system1 load-test -n 1000 -c 1000 -d dataset_1mb.csv --connectors cc-28-aa-cd-5c-74
 
-python main.py --backend system1 load-test -n 100 -c 100 -d dataset_1mb.csv -p stream --connectors 10-51-07-96-d5-49
+python main.py --backend system1 load-test -n 1000 -c 1000 -d dataset_1mb.csv -p stream --connectors cc-28-aa-cd-5c-74
 
-python main.py --backend system1 load-test -n 100 -c 10 -d dataset_1mb.csv -p offload --connectors 10-51-07-96-d5-49
+python main.py --backend system1 load-test -n 100 -c 10 -d dataset_1mb.csv -p offload --connectors cc-28-aa-cd-5c-74
 
 
 
 # Sistema 2 - con connector específico
-python main.py --backend system2 load-test -n 100 -c 100 --connectors tenant_sergio -d dataset_1mb.csv
+python main.py --backend system2 load-test -n 100 -c 100 --connectors tenant_desktop_cfiot58 -d dataset_1mb
+
+python main.py --backend system2 load-test -n 1000 -c 1000 --connectors tenant_desktop_cfiot58 -d dataset_1mb
 
 # Sistema 3 - exportar resultados a JSON
 python main.py --backend system3 load-test -n 50 -c 5 -d sales --json results.json
@@ -78,13 +80,13 @@ python main.py --backend system3 load-test -n 50 -c 5 -d sales --json results.js
 
 ``` bash
 # Sistema 1 - 100 requests, 100 concurrentes
-python main.py --backend system1 load-test -n 100 -c 100 -d dataset_1mb.csv -p stream --connectors 10-51-07-96-d5-49
+python main.py --backend system1 load-test -n 1000 -c 1000 -d dataset_1mb.csv -p stream --connectors cc-28-aa-cd-5c-74
 
 # Sistema 2 - 100 requests, 100 concurrentes
-python main.py --backend system2 load-test -n 100 -c 100 --connectors tenant_sergio -d sales --rows 10000
+python main.py --backend system2 load-test -n 100 -c 100 --connectors tenant_desktop_cfiot58 -d dataset_1mb
 
 # Sistema 3 - 100 requests, 100 concurrentes
-python main.py --backend system3 load-test -n 100 -c 100 --connectors tenant_sergio -d sales --rows 10000
+python main.py --backend system3 load-test -n 100 -c 100 --connectors tenant_desktop_cfiot58 -d dataset_1mb
 
 ``` 
 
