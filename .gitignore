@@ -208,3 +208,5 @@ __marimo__/
 
 # Archivo de metricas
 *.csv
+metrics.csv
+README.md

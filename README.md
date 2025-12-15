@@ -88,6 +88,8 @@ python main.py --backend system2 load-test -n 100 -c 100 --connectors tenant_des
 # Sistema 3 - 100 requests, 100 concurrentes
 python main.py --backend system3 load-test -n 100 -c 100 --connectors tenant_desktop_cfiot58 -d dataset_1mb
 
+python main.py --backend system4 load-test -n 100 -c 100 --connectors tenant_sergio -d dataset_1mb
+
 ``` 
 
 ### Opciones de Load Test
